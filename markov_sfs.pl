@@ -9,6 +9,7 @@ with 'MooseX::Getopt';
 use Math::Random::MT::Auto qw(:!auto);
 use PDL;
 use PDL::IO::FITS;
+use GD;
 
 use YAML qw(Dump Load DumpFile LoadFile);
 
@@ -146,19 +147,20 @@ sub BUILD {
     }
 
     # max drifting alleles
+    # default is 2N, so we can fomulate a square
     unless ( $self->max_allele ) {
-        $self->{max_allele} = 2 * $self->mu * $self->pop_size * 20;
+        $self->{max_allele} = $self->pop_size * 2;
     }
 
     # default output filename
     unless ( $self->output ) {
         $self->{output}
-            = "Freq[N"
-            . $self->pop_size . "][T"
-            . $self->runtime . "][M"
-            . $self->max_allele . "][Mu"
-            . $self->mu . "][Eps"
-            . $self->epsilon . "]";
+            = "Freq"
+            . "[N${ \( $self->pop_size ) }]"
+            . "[T${ \( $self->runtime ) }]"
+            . "[M${ \( $self->max_allele ) }]"
+            . "[Mu${ \( $self->mu ) }]"
+            . "[Eps${ \( $self->epsilon ) }]";
     }
 
     # use matrix
@@ -452,17 +454,41 @@ sub record {
     $order = $order->qsorti;
     $matrix = $matrix->dice_axis( 1, $order );
     $matrix->wfits("$outdir/matrix.fits");
-
-    eval { require Image::Magick; };
-    if ( !$@ ) {
-        for (qw{matrix.fits mom.fits dad.fits}) {
-            my $model = Image::Magick->new;
-            $model->ReadImage("$outdir/$_");
-            $model->Write("$outdir/$_.png");
-        }
-    }
+    $self->pdl_via_gd( $matrix, "$outdir/matrix.png" );
 
     return;
+}
+
+sub pdl_via_gd {
+    my $self = shift;
+    my $pdl  = shift;
+    my $file = shift;
+
+    print $pdl;
+
+    my ( $dimx, $dimy ) = $pdl->dims;
+
+    my $image = GD::Image->new( $dimx, $dimy );
+    my $white = $image->colorAllocate( 255, 255, 255 );
+    my $black = $image->colorAllocate( 0,   0,   0 );
+
+    for my $x ( 0 .. $dimx - 1 ) {
+        for my $y ( 0 .. $dimy - 1 ) {
+            if ( $pdl->slice("$x,$y") == 1 ) {
+                $image->setPixel( $x, $y, $white );
+            }
+            elsif ( $pdl->slice("$x,$y") == 0 ) {
+                $image->setPixel( $x, $y, $black );
+            }
+            else {
+                print $pdl->slice("$x,$y");
+            }
+        }
+    }
+    open my $fh, '>', $file;
+    binmode $fh;
+    print {$fh} $image->png;
+    close $fh;
 }
 
 package main;
