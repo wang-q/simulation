@@ -1,10 +1,11 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 package MarkovSFS;
 use Moose;
-with 'MooseX::Getopt';
+use MooX::Options;
 
 use Math::Random::MT::Auto qw(:!auto);
 use PDL;
@@ -13,50 +14,44 @@ use GD;
 
 use YAML qw(Dump Load DumpFile LoadFile);
 
-has 'pop_size' => (
-    is            => 'ro',
-    isa           => 'Int',
-    default       => 100,
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ n N }],
-    documentation => "diploid popsize",
+option 'pop_size' => (
+    is      => 'ro',
+    format  => 'i',
+    short   => 'n',
+    default => 100,
+    doc     => "diploid popsize",
 );
-has 'runtime' => (
-    is            => 'ro',
-    isa           => 'Int',
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ t T }],
-    documentation => "generations to run",
+option 'runtime' => (
+    is     => 'ro',
+    format => 'i',
+    short  => 't',
+    doc    => "generations to run",
 );
-has 'max_allele' => (
-    is            => 'ro',
-    isa           => 'Int',
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ m M }],
-    documentation => "max allele number",
+option 'max_allele' => (
+    is     => 'ro',
+    format => 'i',
+    short  => 'm',
+    doc    => "max allele number",
 );
-has 'mu' => (
-    is            => 'ro',
-    isa           => 'Num',
-    default       => 0.05,
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ u U }],
-    documentation => "mutation rate normal",
+option 'mu' => (
+    is      => 'ro',
+    format  => 'f',
+    short   => 'u',
+    default => 0.05,
+    doc     => "mutation rate normal",
 );
-has 'epsilon' => (
-    is            => 'ro',
-    isa           => 'Num',
-    default       => 0.001,
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ e E }],
-    documentation => "gene conversion rate",
+option 'epsilon' => (
+    is      => 'ro',
+    format  => 'f',
+    short   => 'e',
+    default => 0.001,
+    doc     => "gene conversion rate",
 );
-has 'output' => (
-    is            => 'rw',
-    isa           => 'Str',
-    traits        => ['Getopt'],
-    cmd_aliases   => [qw{ o O }],
-    documentation => "output dir name",
+option 'output' => (
+    is     => 'rw',
+    format => 's',
+    short  => 'o',
+    doc    => "output dir name",
 );
 
 # suffix for
@@ -67,36 +62,31 @@ has 'seed' => (
     is      => 'ro',
     isa     => 'Int',
     default => time ^ $$,
-    traits  => ['Getopt']
 );
 
 # Random Number Generators
 has 'rng' => (
-    is     => 'ro',
-    isa    => 'Object',
-    traits => ['NoGetopt'],
+    is  => 'ro',
+    isa => 'Object',
 );
 
 # internal storage
-has 'mom' => ( is => 'ro', isa => 'Object', traits => ['NoGetopt'], );
-has 'dad' => ( is => 'ro', isa => 'Object', traits => ['NoGetopt'], );
+has 'mom' => ( is => 'ro', isa => 'Object', );
+has 'dad' => ( is => 'ro', isa => 'Object', );
 has 'freq' => (
     is      => 'ro',
     isa     => 'ArrayRef[Int]',
     default => sub { [] },
-    traits  => ['NoGetopt'],
 );
 has 'used' => (
     is      => 'ro',
     isa     => 'ArrayRef[Int]',
     default => sub { [] },
-    traits  => ['NoGetopt'],
 );
 has 'empty' => (
     is      => 'ro',
     isa     => 'ArrayRef[Int]',
     default => sub { [] },
-    traits  => ['NoGetopt'],
 );
 
 # fixed and all allele count
@@ -110,7 +100,6 @@ has 'allele_of' => (
             lost  => 0,
         };
     },
-    traits => ['NoGetopt'],
 );
 
 # current generation
@@ -118,7 +107,6 @@ has 'gen' => (
     is      => 'ro',
     isa     => 'Int',
     default => 0,
-    traits  => ['NoGetopt'],
 );
 
 # allele dynamic
@@ -126,7 +114,6 @@ has 'dynamic' => (
     is      => 'ro',
     isa     => 'HashRef[Ref]',
     default => sub { {} },
-    traits  => ['NoGetopt'],
 );
 
 sub BUILD {
