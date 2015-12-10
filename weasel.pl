@@ -56,46 +56,56 @@ sub best {
 
 sub run {
     my $self = shift;
-    $self->new_generation until $self->best->perfect;
+
+    # run until be perfect
+    while ( !$self->best->perfect ) {
+        $self->new_generation;
+        print $self->best->to_string;
+    }
+
+    printf "\n[Report]\n"
+        . "Population size:  %s\n"
+        . "Mutation rate:    %s\n"
+        . "Final generation: %s\n",
+        $self->size, $self->rate, $self->best->generation;
 }
-
-after new_generation => sub {
-    my $self = shift;
-    print $self->best->to_string;
-};
-
-after run => sub {
-    my $self = shift;
-    print "\n[Report]\n";
-    print "Population size:  ${\$self->size}\n";
-    print "Mutation rate:    ${\$self->rate}\n";
-    print "Final generation: ${\$self->best->generation}\n";
-};
-
-1;
 
 package Mutation;
 use Moose::Role;
 
-use String::Compare;
-
-has 'fitness' => ( isa => 'Num', is => 'rw', lazy_build => 1 );
+has 'fitness' => (
+    isa     => 'Num',
+    is      => 'rw',
+    lazy    => 1,
+    builder => '_build_fitness',
+);
 
 sub _build_fitness {
     my $self = shift;
-    return String::Compare::char_by_char( $self->string, $self->target );
+
+    my $size1 = length $self->string;
+    my $size2 = length $self->target;
+    my $size  = $size1 > $size2 ? $size1 : $size2;
+
+    my $score = 0;
+    for ( my $i = 0; $i < $size; $i++ ) {
+        my $c1 = substr $self->string, $i, 1;
+        my $c2 = substr $self->target, $i, 1;
+        if ( $c1 eq $c2 ) {
+            $score += 1 / $size;
+        }
+    }
+    return $score;
 }
 
 sub inherit_string {
     my $self = shift;
-    return join '',
-        map { $self->mutate($_) } 0 .. ( length $self->parent->string ) - 1;
+    return join '', map { $self->mutate($_) } 0 .. length( $self->parent->string ) - 1;
 }
 
 sub random_str {
     my $self = shift;
-    return join '',
-        map { $self->random_char } 0 .. ( length $self->target ) - 1;
+    return join '', map { $self->random_char } 0 .. length( $self->target ) - 1;
 }
 
 sub random_char {
@@ -108,13 +118,9 @@ sub mutate {
     my $idx    = shift;
     my $target = substr( $self->parent->string, $idx, 1 );
 
-    # locking to target
-    #return $target if $target eq substr( $self->target, $idx, 1 );
     return $target unless rand() < $self->rate;
     return $self->random_char;
 }
-
-1;
 
 package Weasel;
 use Moose;
@@ -166,12 +172,10 @@ sub spawn {
 sub to_string {
     my $self = shift;
     return
-          " ${\sprintf('%04d', $self->generation)}: "
-        . "[${ \$self->string }] "
-        . "(${\sprintf('%1.4f', $self->fitness)})\n";
+          sprintf( '%04d', $self->generation ) . ": ["
+        . $self->string . "] ("
+        . sprintf( '%1.4f', $self->fitness ) . ")\n";
 }
-
-1;
 
 package main;
 my $world = World->new_with_options;
