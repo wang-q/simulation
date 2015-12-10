@@ -1,22 +1,25 @@
 #!/usr/bin/perl
 
 package World;
-use Moose;
-with 'MooseX::Getopt';
+use Moo;
+use MooX::Options;
 
-has 'size' => ( isa => 'Int', is => 'rw', default => 100, );
-has 'rate' => ( isa => 'Num', is => 'rw', default => 0.05, );
-has 'target' => (
-    isa       => 'Str',
-    is        => 'ro',
-    default   => 'METHINKS IT IS LIKE A WEASEL',
-    metaclass => 'NoGetopt',
+option 'size' => (
+    is      => 'ro',
+    format  => 'i',
+    short   => 's',
+    doc     => "population size",
+    default => 100,
 );
-has 'current_generation' => (
-    isa       => 'ArrayRef[Weasel]',
-    is        => 'rw',
-    metaclass => 'NoGetopt',
+option 'rate' => (
+    is      => 'ro',
+    format  => 'f',
+    short   => 'r',
+    doc     => "mutation rate",
+    default => 0.05,
 );
+has 'target' => ( is => 'ro', default => 'METHINKS IT IS LIKE A WEASEL', );
+has 'current_generation' => ( is => 'rw', );
 
 sub BUILD {
     my $self = shift;
@@ -70,15 +73,37 @@ sub run {
         $self->size, $self->rate, $self->best->generation;
 }
 
-package Mutation;
-use Moose::Role;
+package Weasel;
+use Moo;
 
-has 'fitness' => (
-    isa     => 'Num',
-    is      => 'rw',
-    lazy    => 1,
-    builder => '_build_fitness',
-);
+has 'target'     => ( is => 'ro', );                                            # Str
+has 'rate'       => ( is => 'ro', );                                            # Num
+has 'parent'     => ( is => 'ro', );                                            # Weasel
+has 'generation' => ( is => 'ro', );                                            # Int
+has 'string'     => ( is => 'ro', );                                            # Str
+has 'fitness'    => ( is => 'rw', lazy => 1, builder => '_build_fitness', );    # Num
+
+sub BUILD {
+    my $self = shift;
+
+    # build generation
+    if ( $self->parent ) {
+        $self->{generation} = $self->parent->generation + 1;
+    }
+    else {
+        $self->{generation} = 0;
+    }
+
+    # build string
+    if ( $self->parent ) {
+        $self->{string} = $self->inherit_string;
+    }
+    else {
+        $self->{string} = $self->random_str;
+    }
+
+    return;
+}
 
 sub _build_fitness {
     my $self = shift;
@@ -120,38 +145,6 @@ sub mutate {
 
     return $target unless rand() < $self->rate;
     return $self->random_char;
-}
-
-package Weasel;
-use Moose;
-with 'Mutation';
-
-has 'target'     => ( isa => 'Str',    is => 'ro', );
-has 'rate'       => ( isa => 'Num',    is => 'ro', );
-has 'parent'     => ( isa => 'Weasel', is => 'ro', );
-has 'generation' => ( isa => 'Int',    is => 'ro', );
-has 'string'     => ( isa => 'Str',    is => 'ro', );
-
-sub BUILD {
-    my $self = shift;
-
-    # build generation
-    if ( $self->parent ) {
-        $self->{generation} = $self->parent->generation + 1;
-    }
-    else {
-        $self->{generation} = 0;
-    }
-
-    # build string
-    if ( $self->parent ) {
-        $self->{string} = $self->inherit_string;
-    }
-    else {
-        $self->{string} = $self->random_str;
-    }
-
-    return;
 }
 
 sub perfect {
