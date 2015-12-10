@@ -1,6 +1,9 @@
 # unneeded directories
 heterohot
 
+# result directories
+Freq*
+
 # webstorm project files
 .idea
 

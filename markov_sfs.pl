@@ -4,48 +4,49 @@ use warnings;
 use autodie;
 
 package MarkovSFS;
-use Moose;
+use Moo;
 use MooX::Options;
 
 use Math::Random::MT::Auto qw(:!auto);
 use PDL;
 use PDL::IO::FITS;
 use GD;
-
-use YAML qw(Dump Load DumpFile LoadFile);
+use Path::Tiny;
+use Statistics::R;
+use YAML::Syck qw(Dump Load DumpFile LoadFile);
 
 option 'pop_size' => (
     is      => 'ro',
     format  => 'i',
     short   => 'n',
     default => 100,
-    doc     => "diploid popsize",
+    doc     => "diploid popsize, default is 100",
 );
 option 'runtime' => (
     is     => 'ro',
     format => 'i',
     short  => 't',
-    doc    => "generations to run",
+    doc    => "generations to run, default is 8N",
 );
 option 'max_allele' => (
     is     => 'ro',
     format => 'i',
     short  => 'm',
-    doc    => "max allele number",
+    doc    => "max allele number, default is 2N",
 );
 option 'mu' => (
     is      => 'ro',
     format  => 'f',
     short   => 'u',
-    default => 0.05,
-    doc     => "mutation rate normal",
+    default => 0.01,
+    doc     => "mutation rate normal, default is 0.01",
 );
 option 'epsilon' => (
     is      => 'ro',
     format  => 'f',
     short   => 'e',
     default => 0.001,
-    doc     => "gene conversion rate",
+    doc     => "gene conversion rate, default is 0.001",
 );
 option 'output' => (
     is     => 'rw',
@@ -55,44 +56,27 @@ option 'output' => (
 );
 
 # suffix for
-has 'suffix' => ( is => 'rw', isa => 'Str', default => "001" );
-
-# random seed
-has 'seed' => (
-    is      => 'ro',
-    isa     => 'Int',
-    default => time ^ $$,
-);
+has 'suffix' => ( is => 'rw', default => "01" );    # Str
 
 # Random Number Generators
-has 'rng' => (
-    is  => 'ro',
-    isa => 'Object',
-);
+has 'rng' => ( is => 'ro', );                       # Object
 
 # internal storage
-has 'mom' => ( is => 'ro', isa => 'Object', );
-has 'dad' => ( is => 'ro', isa => 'Object', );
-has 'freq' => (
-    is      => 'ro',
-    isa     => 'ArrayRef[Int]',
-    default => sub { [] },
-);
-has 'used' => (
-    is      => 'ro',
-    isa     => 'ArrayRef[Int]',
-    default => sub { [] },
-);
-has 'empty' => (
-    is      => 'ro',
-    isa     => 'ArrayRef[Int]',
-    default => sub { [] },
-);
+has 'mom'   => ( is => 'ro', );                           # Object
+has 'dad'   => ( is => 'ro', );                           # Object
+has 'freq'  => ( is => 'ro', default => sub { [] }, );    # ArrayRef[Int]
+has 'used'  => ( is => 'ro', default => sub { [] }, );    # ArrayRef[Int]
+has 'empty' => ( is => 'ro', default => sub { [] }, );    # ArrayRef[Int]
+
+# current generation
+has 'gen' => ( is => 'ro', default => 0, );               # Int
+
+# allele dynamic
+has 'dynamic' => ( is => 'ro', default => sub { {} }, );    # HashRef[Ref]
 
 # fixed and all allele count
 has 'allele_of' => (
     is      => 'ro',
-    isa     => 'HashRef',
     default => sub {
         {   all   => 0,
             drift => 0,
@@ -100,54 +84,30 @@ has 'allele_of' => (
             lost  => 0,
         };
     },
-);
-
-# current generation
-has 'gen' => (
-    is      => 'ro',
-    isa     => 'Int',
-    default => 0,
-);
-
-# allele dynamic
-has 'dynamic' => (
-    is      => 'ro',
-    isa     => 'HashRef[Ref]',
-    default => sub { {} },
-);
+);                                                          # HashRef
 
 sub BUILD {
     my $self = shift;
 
-    # intialize gsl random stuff
-    # ¡°Mersenne Twister¡± generator
-
-    my $seed = $self->seed;
-    my $rng  = Math::Random::MT::Auto->new;
+    # Mersenne Twister generator
+    my $rng = Math::Random::MT::Auto->new;
     $rng->srand;
     $self->{rng} = $rng;
 
     # running time to get to pseudo-equilibrium
-    # default is 8N
     unless ( $self->runtime ) {
         $self->{runtime} = 8 * $self->pop_size;
     }
 
     # max drifting alleles
-    # default is 2N, so we can fomulate a square
     unless ( $self->max_allele ) {
         $self->{max_allele} = $self->pop_size * 2;
     }
 
-    # default output filename
+    # output directory
     unless ( $self->output ) {
-        $self->{output}
-            = "Freq"
-            . "[N${ \( $self->pop_size ) }]"
-            . "[T${ \( $self->runtime ) }]"
-            . "[M${ \( $self->max_allele ) }]"
-            . "[Mu${ \( $self->mu ) }]"
-            . "[Eps${ \( $self->epsilon ) }]";
+        $self->{output} = sprintf "Freq[N%s][T%s][M%s][Mu%s][Eps%s]", $self->pop_size,
+            $self->runtime, $self->max_allele, $self->mu, $self->epsilon;
     }
 
     # use matrix
@@ -182,22 +142,15 @@ sub run {
         # measure frequency and remove all alleles that are fixed
         $self->measure_freq;
         $self->reset_fixed;
-
         $self->report;
 
-        #----------------------------#
         # gene convert
-        #----------------------------#
         $self->gene_convert;
 
-        #----------------------------#
         # mutate
-        #----------------------------#
         $self->mutate;
 
-        #----------------------------#
         # reproduce
-        #----------------------------#
         $self->reproduce;
     }
 
@@ -337,8 +290,7 @@ sub gene_convert {
 
     $self->{dynamic}->{ $self->gen }->{newCons}
         = $epsilon >= 0 ? $cons : -$cons;
-    print "# Convert $cons ",
-        $epsilon >= 0 ? "wild types to mutants\n" : "mutants to wild types\n";
+    print "# Convert $cons ", $epsilon >= 0 ? "wild types to mutants\n" : "mutants to wild types\n";
 
     my %seen;
     for ( 1 .. $cons ) {
@@ -421,7 +373,15 @@ sub record {
     for my $allele ( @{ $self->used } ) {
         push @drifting, $self->freq->[$allele];
     }
-    DumpFile( "$outdir/freq.yml", \@drifting );
+    my $freq_file = path( $outdir, "freq.csv" );
+
+    print "Write freq file.\n";
+    $freq_file->spew( map {"$_\n"} ("freq", @drifting) );
+
+    print "Write freq histogram.\n";
+    $self->freq_hist( $freq_file->stringify );
+
+    print "Write opt.yml.\n";
     DumpFile(
         "$outdir/opt.yml",
         {   N   => $self->pop_size,
@@ -431,8 +391,11 @@ sub record {
             Eps => $self->epsilon,
         }
     );
+
+    print "Write dynamic.yml.\n";
     DumpFile( "$outdir/dynamic.yml", $self->dynamic );
 
+    print "Write fits files.\n";
     $self->mom->wfits("$outdir/mom.fits");
     $self->dad->wfits("$outdir/dad.fits");
 
@@ -441,9 +404,35 @@ sub record {
     $order = $order->qsorti;
     $matrix = $matrix->dice_axis( 1, $order );
     $matrix->wfits("$outdir/matrix.fits");
+
+    print "Write matrix.png.\n";
     $self->pdl_via_gd( $matrix, "$outdir/matrix.png" );
 
     return;
+}
+
+sub freq_hist {
+    my $self = shift;
+    my $file = shift;
+
+    my $R = Statistics::R->new;
+    $R->set( 'file_csv',   $file );
+    $R->set( 'file_chart',   "$file.pdf" );
+
+    my $r_code = <<'EOF';
+        library(ggplot2)
+        library(scales)
+        plotdata <- read.csv(file_csv, header = TRUE)
+        pdf( file_chart, width = 3, height = 3)
+        ggplot(plotdata, aes(x=freq)) +
+            geom_histogram(binwidth = 0.1) +
+            theme_bw(base_size = 10)
+        dev.off()
+EOF
+
+    $R->run($r_code);
+    print $R->result;
+    $R->stop;
 }
 
 sub pdl_via_gd {
